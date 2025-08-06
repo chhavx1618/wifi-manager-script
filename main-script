@@ -1,0 +1,96 @@
+#!/bin/bash
+
+# WiFi Network Manager for wlp8s0
+# Usage: ./wifi_manager.sh [add|remove|list|connect|status]
+
+CONFIG_FILE="/etc/wpa_supplicant/wpa_supplicant-wlp8s0.conf"
+INTERFACE="wlp8s0"
+
+case "$1" in
+    "add")
+        echo "Adding new WiFi network..."
+        read -p "Enter SSID: " ssid
+        read -s -p "Enter password (leave empty for open network): " password
+        echo
+        read -p "Enter priority (1-10, higher = preferred): " priority
+        
+        if [ -z "$password" ]; then
+            # Open network
+            sudo tee -a "$CONFIG_FILE" << EOF
+
+network={
+    ssid="$ssid"
+    key_mgmt=NONE
+    priority=$priority
+}
+EOF
+        else
+            # WPA/WPA2 network
+            sudo tee -a "$CONFIG_FILE" << EOF
+
+network={
+    ssid="$ssid"
+    psk="$password"
+    priority=$priority
+}
+EOF
+        fi
+        echo "Network '$ssid' added successfully!"
+        sudo systemctl restart wpa_supplicant-wlp8s0
+        ;;
+        
+    "remove")
+        echo "Available networks:"
+        grep -n "ssid=" "$CONFIG_FILE" | sed 's/.*ssid="\([^"]*\)".*/\1/'
+        read -p "Enter SSID to remove: " ssid
+        sudo sed -i "/ssid=\"$ssid\"/,/^}/d" "$CONFIG_FILE"
+        echo "Network '$ssid' removed!"
+        sudo systemctl restart wpa_supplicant-wlp8s0
+        ;;
+        
+    "list")
+        echo "Configured networks:"
+        grep -A2 "ssid=" "$CONFIG_FILE" | grep -E "(ssid=|priority=)" | \
+        sed 's/.*ssid="\([^"]*\)".*/SSID: \1/' | \
+        sed 's/.*priority=\([0-9]*\).*/Priority: \1\n/'
+        ;;
+        
+    "scan")
+        echo "Scanning for available networks..."
+        sudo iw "$INTERFACE" scan | grep -E "SSID|signal" | \
+        grep -B1 "SSID:" | sed 's/.*signal: \([^ ]*\).*/Signal: \1 dBm/' | \
+        sed 's/.*SSID: \(.*\)/Network: \1/'
+        ;;
+        
+    "connect")
+        echo "Attempting to connect to available networks..."
+        sudo systemctl restart wpa_supplicant-wlp8s0
+        sleep 5
+        if iwconfig "$INTERFACE" | grep -q "ESSID:"; then
+            echo "Connected to: $(iwconfig "$INTERFACE" | grep ESSID | cut -d'"' -f2)"
+        else
+            echo "Connection failed. Check your configuration."
+        fi
+        ;;
+        
+    "status")
+        echo "Current WiFi status:"
+        iwconfig "$INTERFACE"
+        echo
+        echo "IP Configuration:"
+        ip addr show "$INTERFACE" | grep "inet "
+        ;;
+        
+    *)
+        echo "WiFi Network Manager"
+        echo "Usage: $0 {add|remove|list|scan|connect|status}"
+        echo
+        echo "Commands:"
+        echo "  add     - Add a new WiFi network"
+        echo "  remove  - Remove an existing network"
+        echo "  list    - List all configured networks"
+        echo "  scan    - Scan for available networks"
+        echo "  connect - Force reconnection attempt"
+        echo "  status  - Show current connection status"
+        ;;
+esac
